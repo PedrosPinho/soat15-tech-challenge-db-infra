@@ -16,6 +16,19 @@ no repositório da aplicação.
   (`SecureString`)
 - Security groups: RDS só aceita 5432 dos SGs do EKS e da Lambda de autenticação
 
+**Onde fica o SG da Lambda de autenticação**: criado neste repositório
+(`aws_security_group.lambda_auth`, em `security_groups.tf`), não em
+`auth-lambda`, mesmo a função Lambda em si vivendo lá. O SG do RDS precisa
+liberar ingress para o SG da Lambda desde a sua criação, e `db-infra` é
+sempre o primeiro repositório aplicado (ver "Dependências" abaixo) — se o SG
+vivesse em `auth-lambda`, o RDS teria que ser recriado/atualizado depois que
+`auth-lambda` existisse, ou `auth-lambda` teria que aplicar antes da própria
+VPC/RDS, invertendo a ordem de dependência dos 4 repositórios. Criar o SG
+(recurso sem custo, sem regras de ingress) aqui e deixar só a função Lambda
+em si no repo `auth-lambda` evita essa dependência circular. O id é exportado
+como output `lambda_auth_security_group_id` para `auth-lambda` anexar à
+função via `terraform_remote_state`.
+
 ## Dependências
 
 Nenhuma — este é o primeiro repositório a aplicar. Exporta outputs consumidos por
@@ -36,6 +49,18 @@ terraform init
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
+
+## Ambientes (workspaces)
+
+`homolog` e `prod` (branch `main`) são [workspaces do Terraform](https://developer.hashicorp.com/terraform/language/state/workspaces),
+não conteúdos de arquivo diferentes — o mesmo código HCL é aplicado nos dois,
+diferenciado só pelo workspace ativo (`terraform workspace select`). Nomes de
+recursos que precisam ser únicos na conta/região (identifier do RDS, nome do
+parâmetro SSM, tags `Name`) incluem `terraform.workspace` via
+`local.name_prefix` (`vpc.tf`), evitando colisão caso os dois ambientes
+existam ao mesmo tempo. O backend S3 já isola o state de cada workspace
+automaticamente (prefixo `env:/<workspace>/` antes da `key` — ver
+`backend.tf`).
 
 ## Ciclo de sessão do Learner Lab
 
