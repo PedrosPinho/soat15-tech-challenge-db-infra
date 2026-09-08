@@ -50,6 +50,19 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
+## CI/CD
+
+Pipeline em `.github/workflows/terraform.yml`: `fmt` → `validate` → `tflint` →
+`plan` (em PR, comentado no PR) → `apply` (push em `homolog`/`main`, com
+`terraform workspace select -or-create` calculado a partir da branch). Único
+repositório de infra a rodar primeiro — os outros dependem do seu
+`terraform_remote_state`.
+
+**Secrets do GitHub**: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/
+`AWS_SESSION_TOKEN` — credenciais temporárias do Learner Lab, renovadas por
+`scripts/refresh-aws-secrets.sh` (repositório da aplicação) nos 4
+repositórios de uma vez.
+
 ## Ambientes (workspaces)
 
 `homolog` e `prod` (branch `main`) são [workspaces do Terraform](https://developer.hashicorp.com/terraform/language/state/workspaces),
