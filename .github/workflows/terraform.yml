@@ -136,4 +136,16 @@ jobs:
           [ "${{ github.ref_name }}" = "main" ] && ENV=prod
           terraform workspace select -or-create "$ENV"
 
-      - run: terraform apply -auto-approve -input=false
+      - name: Apply (só em homolog -- prod não é implantado de verdade, ver ADR-007)
+        # Um apply de verdade em `main` criaria o workspace "prod" pela
+        # primeira vez -- e teria SUCESSO, não falharia: uma VPC + RDS novos,
+        # pagos e redundantes à de homolog (local.name_prefix já inclui
+        # terraform.workspace, então nada colide). Isso é o oposto de "não
+        # enviar para produção", então em `main` o pipeline roda só até
+        # `plan` -- nunca muta infraestrutura de verdade.
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            terraform plan -input=false
+          else
+            terraform apply -auto-approve -input=false
+          fi
