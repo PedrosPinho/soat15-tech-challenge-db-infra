@@ -16,6 +16,53 @@ no repositório da aplicação.
   (`SecureString`)
 - Security groups: RDS só aceita 5432 dos SGs do EKS e da Lambda de autenticação
 
+**Onde fica o SG da Lambda de autenticação**: criado neste repositório
+(`aws_security_group.lambda_auth`, em `security_groups.tf`), não em
+`auth-lambda`, mesmo a função Lambda em si vivendo lá. O SG do RDS precisa
+liberar ingress para o SG da Lambda desde a sua criação, e `db-infra` é
+sempre o primeiro repositório aplicado (ver "Dependências" abaixo) — se o SG
+vivesse em `auth-lambda`, o RDS teria que ser recriado/atualizado depois que
+`auth-lambda` existisse, ou `auth-lambda` teria que aplicar antes da própria
+VPC/RDS, invertendo a ordem de dependência dos 4 repositórios. Criar o SG
+(recurso sem custo, sem regras de ingress) aqui e deixar só a função Lambda
+em si no repo `auth-lambda` evita essa dependência circular. O id é exportado
+como output `lambda_auth_security_group_id` para `auth-lambda` anexar à
+função via `terraform_remote_state`.
+
+## Diagrama de arquitetura
+
+```mermaid
+flowchart TB
+    subgraph VPC["VPC (aws_vpc.main)"]
+        IGW[Internet Gateway]
+
+        subgraph Public["Subnets públicas (uma por AZ)"]
+            SGNodes["SG eks_nodes\n(placeholder, anexado pelo k8s-infra)"]
+        end
+
+        subgraph Private["Subnets privadas (uma por AZ)"]
+            SGLambda["SG lambda_auth\n(placeholder, anexado pelo auth-lambda)"]
+            RDS[(RDS PostgreSQL 16\ndb.t4g.micro)]
+            SGRDS[SG rds]
+        end
+    end
+
+    SSM[[SSM Parameter Store\nsenha do master user]]
+
+    IGW --- Public
+    SGNodes -.5432.-> SGRDS
+    SGLambda -.5432.-> SGRDS
+    SGRDS --- RDS
+    RDS -.senha gerada com random_password.-> SSM
+```
+
+Só a VPC, o RDS e os security groups vivem aqui. Os dois SGs marcados
+"placeholder" existem neste repositório (não em `k8s-infra`/`auth-lambda`)
+para o RDS já nascer com as regras de ingress corretas — ver "Onde fica o SG
+da Lambda de autenticação" acima. `vpc_id`, `*_subnet_ids` e os dois SG ids
+são exportados como outputs e consumidos pelos outros dois repositórios via
+`terraform_remote_state`.
+
 ## Dependências
 
 Nenhuma — este é o primeiro repositório a aplicar. Exporta outputs consumidos por
@@ -36,6 +83,31 @@ terraform init
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
+
+## CI/CD
+
+Pipeline em `.github/workflows/terraform.yml`: `fmt` → `validate` → `tflint` →
+`plan` (em PR, comentado no PR) → `apply` (push em `homolog`/`main`, com
+`terraform workspace select -or-create` calculado a partir da branch). Único
+repositório de infra a rodar primeiro — os outros dependem do seu
+`terraform_remote_state`.
+
+**Secrets do GitHub**: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/
+`AWS_SESSION_TOKEN` — credenciais temporárias do Learner Lab, renovadas por
+`scripts/refresh-aws-secrets.sh` (repositório da aplicação) nos 4
+repositórios de uma vez.
+
+## Ambientes (workspaces)
+
+`homolog` e `prod` (branch `main`) são [workspaces do Terraform](https://developer.hashicorp.com/terraform/language/state/workspaces),
+não conteúdos de arquivo diferentes — o mesmo código HCL é aplicado nos dois,
+diferenciado só pelo workspace ativo (`terraform workspace select`). Nomes de
+recursos que precisam ser únicos na conta/região (identifier do RDS, nome do
+parâmetro SSM, tags `Name`) incluem `terraform.workspace` via
+`local.name_prefix` (`vpc.tf`), evitando colisão caso os dois ambientes
+existam ao mesmo tempo. O backend S3 já isola o state de cada workspace
+automaticamente (prefixo `env:/<workspace>/` antes da `key` — ver
+`backend.tf`).
 
 ## Ciclo de sessão do Learner Lab
 
