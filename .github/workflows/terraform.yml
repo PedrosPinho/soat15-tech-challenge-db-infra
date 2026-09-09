@@ -1,0 +1,151 @@
+name: Terraform
+
+# db-infra é o primeiro repositório aplicado (sem dependências, ver README) —
+# fmt/validate/tflint em toda PR e push; plan comentado na PR; apply só em push
+# (que só acontece via merge de PR, já que main/homolog são protegidas).
+#
+# Credenciais: sessão temporária do AWS Academy Learner Lab (sem OIDC — IAM
+# bloqueado). AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_SESSION_TOKEN em GitHub
+# Secrets, renovados por scripts/refresh-aws-secrets.sh (repo da aplicação) no
+# início de cada sessão — se falhar com ExpiredToken, rode o script de novo.
+#
+# Ambientes: `homolog`/`prod` são workspaces do Terraform (ver README, não
+# branches com HCL diferente) — branch homolog -> workspace homolog, branch
+# main -> workspace prod.
+
+on:
+  pull_request:
+    branches: [main, homolog]
+  push:
+    branches: [main, homolog]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: "1.9.5"
+
+jobs:
+  fmt-validate:
+    name: fmt + validate + tflint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - run: terraform fmt -check -recursive
+
+      - run: terraform init -backend=false
+
+      - run: terraform validate
+
+      - uses: terraform-linters/setup-tflint@v4
+
+      - name: tflint
+        # Informativo, não bloqueia o pipeline — o ruleset "recommended" do
+        # plugin terraform embutido é suficiente para pegar erros óbvios
+        # (variáveis não usadas, interpolação depreciada etc.) sem depender de
+        # download de plugin de provider (aws) para funcionar.
+        continue-on-error: true
+        run: |
+          tflint --init
+          tflint -f compact
+
+  plan:
+    name: Plan
+    needs: fmt-validate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - run: terraform init
+
+      - name: Selecionar workspace
+        run: |
+          ENV=homolog
+          [ "${{ github.base_ref }}" = "main" ] && ENV=prod
+          terraform workspace select -or-create "$ENV"
+
+      - name: Plan
+        id: plan
+        run: |
+          set -o pipefail
+          terraform plan -no-color -input=false -out=tfplan | tee plan-output.txt
+          {
+            echo "plan<<PLAN_EOF"
+            tail -c 60000 plan-output.txt
+            echo "PLAN_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comentar plan no PR
+        uses: actions/github-script@v7
+        env:
+          PLAN: ${{ steps.plan.outputs.plan }}
+        with:
+          script: |
+            const body = `## Terraform Plan — db-infra\n<details><summary>Ver plano</summary>\n\n\`\`\`\n${process.env.PLAN}\n\`\`\`\n</details>`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+  apply:
+    name: Apply
+    needs: fmt-validate
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'homolog' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - run: terraform init
+
+      - name: Selecionar workspace
+        run: |
+          ENV=homolog
+          [ "${{ github.ref_name }}" = "main" ] && ENV=prod
+          terraform workspace select -or-create "$ENV"
+
+      - name: Apply (só em homolog -- prod não é implantado de verdade, ver ADR-007)
+        # Um apply de verdade em `main` criaria o workspace "prod" pela
+        # primeira vez -- e teria SUCESSO, não falharia: uma VPC + RDS novos,
+        # pagos e redundantes à de homolog (local.name_prefix já inclui
+        # terraform.workspace, então nada colide). Isso é o oposto de "não
+        # enviar para produção", então em `main` o pipeline roda só até
+        # `plan` -- nunca muta infraestrutura de verdade.
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            terraform plan -input=false
+          else
+            terraform apply -auto-approve -input=false
+          fi
