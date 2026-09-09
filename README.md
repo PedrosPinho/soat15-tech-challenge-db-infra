@@ -29,6 +29,40 @@ em si no repo `auth-lambda` evita essa dependência circular. O id é exportado
 como output `lambda_auth_security_group_id` para `auth-lambda` anexar à
 função via `terraform_remote_state`.
 
+## Diagrama de arquitetura
+
+```mermaid
+flowchart TB
+    subgraph VPC["VPC (aws_vpc.main)"]
+        IGW[Internet Gateway]
+
+        subgraph Public["Subnets públicas (uma por AZ)"]
+            SGNodes["SG eks_nodes\n(placeholder, anexado pelo k8s-infra)"]
+        end
+
+        subgraph Private["Subnets privadas (uma por AZ)"]
+            SGLambda["SG lambda_auth\n(placeholder, anexado pelo auth-lambda)"]
+            RDS[(RDS PostgreSQL 16\ndb.t4g.micro)]
+            SGRDS[SG rds]
+        end
+    end
+
+    SSM[[SSM Parameter Store\nsenha do master user]]
+
+    IGW --- Public
+    SGNodes -.5432.-> SGRDS
+    SGLambda -.5432.-> SGRDS
+    SGRDS --- RDS
+    RDS -.senha gerada com random_password.-> SSM
+```
+
+Só a VPC, o RDS e os security groups vivem aqui. Os dois SGs marcados
+"placeholder" existem neste repositório (não em `k8s-infra`/`auth-lambda`)
+para o RDS já nascer com as regras de ingress corretas — ver "Onde fica o SG
+da Lambda de autenticação" acima. `vpc_id`, `*_subnet_ids` e os dois SG ids
+são exportados como outputs e consumidos pelos outros dois repositórios via
+`terraform_remote_state`.
+
 ## Dependências
 
 Nenhuma — este é o primeiro repositório a aplicar. Exporta outputs consumidos por
