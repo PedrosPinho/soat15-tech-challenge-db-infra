@@ -36,6 +36,8 @@ resource "aws_security_group" "eks_nodes" {
 }
 
 # --- SG placeholder da Lambda de autenticação ---
+# FASE 4: a Lambda NÃO acessa mais o RDS (consulta o OS Service por HTTP, ADR-015); o SG
+# continua existindo só para anexar as Lambdas à VPC (egress para o ALB interno).
 # DECISÃO (ver README): criado aqui, não no repo auth-lambda. O SG do RDS precisa
 # liberar ingress para o SG da Lambda desde a criação, e db-infra é o primeiro
 # repositório aplicado — se o SG vivesse em auth-lambda, o RDS teria que ser
@@ -64,7 +66,7 @@ resource "aws_security_group" "lambda_auth" {
 # --- SG do RDS ---
 resource "aws_security_group" "rds" {
   name        = "${local.name_prefix}-rds"
-  description = "RDS PostgreSQL: aceita 5432 apenas dos nos do EKS e da Lambda de autenticacao"
+  description = "RDS PostgreSQL: aceita 5432 apenas dos nos do EKS (a Lambda de autenticacao deixou de acessar o banco na Fase 4)"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -73,14 +75,6 @@ resource "aws_security_group" "rds" {
     to_port         = 5432
     protocol        = "tcp"
     security_groups = [aws_security_group.eks_nodes.id]
-  }
-
-  ingress {
-    description     = "PostgreSQL a partir da Lambda de autenticacao"
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.lambda_auth.id]
   }
 
   # RDS normalmente nao inicia conexoes de saida; egress amplo aqui e uma
