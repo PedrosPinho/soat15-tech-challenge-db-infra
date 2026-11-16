@@ -63,3 +63,34 @@ resource "aws_db_instance" "main" {
     Name = "${local.name_prefix}-db"
   }
 }
+
+# --- Roles por serviço (Fase 4, ADR-012) -----------------------------------------------
+# Um database e um role por serviço na MESMA instância: `oficina_os`/`os_service` e
+# `oficina_billing`/`billing_service`. O Terraform só gera as senhas e as guarda no SSM; a
+# criação dos databases/roles é feita pelo script idempotente `scripts/db-bootstrap.sql`,
+# executado como Job do Kubernetes pelo pipeline do OS Service (o runner do GitHub não
+# alcança o RDS em subnet privada, então o provider `postgresql` do Terraform não serve).
+# Só alfanuméricos: a senha entra em URL de conexão e em `psql -v` sem precisar de escape.
+locals {
+  service_db_roles = toset(["os-service", "billing-service"])
+}
+
+resource "random_password" "service_db" {
+  for_each = local.service_db_roles
+
+  length  = 24
+  special = false
+}
+
+resource "aws_ssm_parameter" "service_db_password" {
+  for_each = local.service_db_roles
+
+  name        = "/${var.project_name}/${terraform.workspace}/db/${each.key}-password"
+  description = "Senha do role ${replace(each.key, "-", "_")} no RDS PostgreSQL (${local.name_prefix})"
+  type        = "SecureString"
+  value       = random_password.service_db[each.key].result
+
+  tags = {
+    Name = "${local.name_prefix}-${each.key}-db-password"
+  }
+}

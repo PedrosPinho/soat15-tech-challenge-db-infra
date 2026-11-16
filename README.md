@@ -14,7 +14,15 @@ no repositório da aplicação.
   snapshot final (ver justificativa nas notas abaixo)
 - Senha do banco gerada com `random_password` e armazenada em SSM Parameter Store
   (`SecureString`)
-- Security groups: RDS só aceita 5432 dos SGs do EKS e da Lambda de autenticação
+- Security groups: RDS só aceita 5432 dos nós do EKS (a Lambda de autenticação deixou de acessar o banco na Fase 4 — consulta o OS Service por HTTP, ADR-015)
+- **Fase 4 (ADR-012)**: um database e um role por serviço na mesma instância
+  (`oficina_os`/`os_service`, `oficina_billing`/`billing_service`). Este repositório gera as
+  senhas dos roles (`random_password`, só alfanuméricos) e as guarda no SSM em
+  `/soat15-tc/<env>/db/os-service-password` e `.../billing-service-password`. A criação dos
+  databases/roles (`CREATE ... IF NOT EXISTS`, `REVOKE CONNECT ... FROM PUBLIC`) é um script SQL
+  idempotente (`k8s/db-bootstrap.sql` no repo do OS Service) rodado como **Job do Kubernetes** pelo
+  pipeline do OS antes da migration — o runner do GitHub não alcança o RDS em subnet privada, então
+  o provider `postgresql` do Terraform não é opção. A senha master só é usada nesse Job.
 
 **Onde fica o SG da Lambda de autenticação**: criado neste repositório
 (`aws_security_group.lambda_auth`, em `security_groups.tf`), não em
@@ -51,7 +59,6 @@ flowchart TB
 
     IGW --- Public
     SGNodes -.5432.-> SGRDS
-    SGLambda -.5432.-> SGRDS
     SGRDS --- RDS
     RDS -.senha gerada com random_password.-> SSM
 ```
@@ -72,7 +79,7 @@ via `terraform_remote_state`.
 
 ## Estado remoto
 
-Bucket S3 (`soat15-tc-tfstate-442534931336`) e tabela DynamoDB de lock
+Bucket S3 (`soat15-tc-tfstate-368596537549`) e tabela DynamoDB de lock
 (`soat15-tc-tfstate-lock`) provisionados manualmente uma única vez, fora do ciclo
 `destroy`/`apply` de qualquer repositório — ver `backend.tf`.
 
