@@ -79,7 +79,7 @@ via `terraform_remote_state`.
 
 ## Estado remoto
 
-Bucket S3 (`soat15-tc-tfstate-442534931336`) e tabela DynamoDB de lock
+Bucket S3 (`soat15-tc-tfstate-368596537549`) e tabela DynamoDB de lock
 (`soat15-tc-tfstate-lock`) provisionados manualmente uma única vez, fora do ciclo
 `destroy`/`apply` de qualquer repositório — ver `backend.tf`.
 

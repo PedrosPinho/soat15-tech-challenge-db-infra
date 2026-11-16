@@ -3,7 +3,7 @@
 # PHASE_3_EXECUTION_GUIDE.md do repositório da aplicação, Passo 1).
 terraform {
   backend "s3" {
-    bucket         = "soat15-tc-tfstate-442534931336"
+    bucket         = "soat15-tc-tfstate-368596537549"
     key            = "db-infra/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "soat15-tc-tfstate-lock"
