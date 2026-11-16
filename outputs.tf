@@ -50,3 +50,8 @@ output "lambda_auth_security_group_id" {
   description = "ID do security group placeholder da Lambda de autenticação — para o repo auth-lambda anexar à função"
   value       = aws_security_group.lambda_auth.id
 }
+
+output "service_db_password_param_names" {
+  description = "Parâmetros SSM (SecureString) com a senha do role de cada serviço (os-service, billing-service)"
+  value       = { for k, p in aws_ssm_parameter.service_db_password : k => p.name }
+}
